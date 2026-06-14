@@ -9,4 +9,8 @@ export type UserOverviewRow = {
   current_streak: number | null;
   ai_chat_count: number;
   bookmark_count: number;
+  tafseer_chat_count: number;
+  general_chat_count: number;
+  tajweed_chat_count: number;
+  hifz_minutes: number;
 };
