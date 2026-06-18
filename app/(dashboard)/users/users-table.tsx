@@ -62,7 +62,7 @@ const EXPORT_HEADERS = [
   "Tafseer Agent",
   "General Agent",
   "Tajweed Agent",
-  "Total AI Chats",
+  "Total AI Messages",
   "Hifz Minutes",
   "Bookmarks",
 ] as const;
@@ -129,7 +129,7 @@ const columns: ColumnDef<UserOverviewRow>[] = [
   },
   {
     accessorKey: "ai_chat_count",
-    header: "Total AI Chats",
+    header: "Total AI Messages",
     sortingFn: numberSort,
     cell: ({ getValue }) => num(getValue<number | null>()),
   },
@@ -183,7 +183,7 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
         "Tafseer Agent": u.tafseer_chat_count ?? 0,
         "General Agent": u.general_chat_count ?? 0,
         "Tajweed Agent": u.tajweed_chat_count ?? 0,
-        "Total AI Chats": u.ai_chat_count ?? 0,
+        "Total AI Messages": u.ai_chat_count ?? 0,
         "Hifz Minutes": u.hifz_minutes ?? 0,
         Bookmarks: u.bookmark_count ?? 0,
       };

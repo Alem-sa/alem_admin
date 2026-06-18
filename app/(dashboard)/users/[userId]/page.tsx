@@ -127,7 +127,11 @@ export default async function UserDetailPage({
     admin.from("ai_feedback").select("rating").eq("user_id", userId),
     // Phase 6 metrics. PostgREST aggregates are disabled, so each selects only
     // the one needed column and we aggregate in JS (data volumes are tiny).
-    admin.from("ai_chats").select("mode").eq("user_id", userId),
+    admin
+      .from("ai_chat_messages")
+      .select("ai_chats!inner(mode)")
+      .eq("user_id", userId)
+      .eq("role", "assistant"),
     admin
       .from("app_sessions")
       .select("duration_seconds")
@@ -187,14 +191,28 @@ export default async function UserDetailPage({
     for (const [rating, count] of tally) feedbackCounts.push({ rating, count });
   }
 
-  // Phase 6: AI usage by agent (general/tafseer/tajweed via ai_chats.mode).
-  const agentCounts = { general: 0, tafseer: 0, tajweed: 0 };
-  for (const r of (agentChatsRes.data ?? []) as { mode: string | null }[]) {
-    const m = (r.mode ?? "").toLowerCase();
-    if (m === "general" || m === "tafseer" || m === "tajweed") {
-      agentCounts[m] += 1;
-    }
+  // AI usage by agent. general + tajweed are assistant-message counts per mode
+  // (from agentChatsRes). tafseer = lifetime ai_messages_count minus those two,
+  // which folds in the hold-on-ayah popup's tafseer replies (counted in
+  // user_progress.ai_messages_count but not stored as chat messages). Floored
+  // at 0. PostgREST aggregates are disabled, so we tally in JS; the !inner
+  // embed types as an array but resolves to a single chat object at runtime.
+  let generalCount = 0;
+  let tajweedCount = 0;
+  for (const r of (agentChatsRes.data ?? []) as Array<{
+    ai_chats: { mode: string | null } | { mode: string | null }[] | null;
+  }>) {
+    const chat = Array.isArray(r.ai_chats) ? r.ai_chats[0] : r.ai_chats;
+    const m = (chat?.mode ?? "").toLowerCase();
+    if (m === "general") generalCount += 1;
+    else if (m === "tajweed") tajweedCount += 1;
   }
+  const lifetimeAiMessages = Number(progress?.ai_messages_count ?? 0);
+  const agentCounts = {
+    general: generalCount,
+    tajweed: tajweedCount,
+    tafseer: Math.max(0, lifetimeAiMessages - generalCount - tajweedCount),
+  };
 
   // Hifz minutes — aligned with the app's "دقائق الحفظ" tile: the lifetime
   // user_progress.total_hifz_seconds counter (already fetched in progressRes).

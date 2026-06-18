@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   CreditCard,
   LayoutDashboard,
+  MessageSquareText,
   Sparkles,
   Users,
   type LucideIcon,
@@ -20,6 +21,7 @@ const NAV: NavItem[] = [
   { label: "Overview", href: "/", icon: LayoutDashboard },
   { label: "Users", href: "/users", icon: Users },
   { label: "AI Usage", href: "/ai-usage", icon: Sparkles },
+  { label: "Feedback", href: "/feedback", icon: MessageSquareText },
   { label: "Subscriptions", href: "/subscriptions", icon: CreditCard },
 ];
 
