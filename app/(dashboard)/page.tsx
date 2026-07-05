@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import {
-  Activity,
   AlertTriangle,
   CalendarRange,
+  Clock,
   Flame,
   type LucideIcon,
   MessageSquare,
@@ -22,10 +22,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { buildDailySeries } from "@/lib/daily-series";
 import { MetricChart } from "./_home/metric-chart";
 import {
+  type AiMessagesRow,
   OverviewUserTables,
   type RecentRow,
-  type StreakRow,
-  type XpRow,
+  type TimeRow,
 } from "./_home/overview-user-tables";
 
 export const metadata: Metadata = { title: "Overview · Alem Admin" };
@@ -37,8 +37,8 @@ type OverviewUserRow = {
   user_id: string;
   email: string | null;
   display_name: string | null;
-  total_xp: number | null;
-  current_streak: number | null;
+  ai_chat_count: number | null;
+  total_app_seconds: number | null;
   created_at: string | null;
 };
 
@@ -49,17 +49,12 @@ export default async function OverviewPage() {
   const admin = createAdminClient();
 
   const cutoff7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const now = new Date();
-  const todayStartMs = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
 
   const [
     totalUsersRes,
     newUsersRes,
-    aiChatsRes,
+    aiMessagesRes,
+    appSessionsRes,
     streakRes,
     readRes,
     checkRes,
@@ -72,7 +67,15 @@ export default async function OverviewPage() {
       .from("profiles")
       .select("*", { count: "exact", head: true })
       .gte("created_at", cutoff7),
-    admin.from("ai_chats").select("*", { count: "exact", head: true }),
+    // Total AI Messages: sum the lifetime per-user counter. PostgREST
+    // aggregates are disabled, so fetch the column and sum in JS. Matches the
+    // users-list "Total AI Messages" column (includes popup tafseer replies).
+    admin.from("user_progress").select("ai_messages_count"),
+    // Total Minutes: all-time app-usage seconds (non-null), summed in JS.
+    admin
+      .from("app_sessions")
+      .select("duration_seconds")
+      .not("duration_seconds", "is", null),
     admin
       .from("user_progress")
       .select("*", { count: "exact", head: true })
@@ -82,33 +85,37 @@ export default async function OverviewPage() {
     admin.from("ai_chats").select("user_id,created_at").gte("created_at", cutoff7),
     admin
       .from("admin_user_overview")
-      .select("user_id,email,display_name,total_xp,current_streak,created_at"),
+      .select("user_id,email,display_name,ai_chat_count,total_app_seconds,created_at"),
     admin.from("admin_overview_daily").select("*").order("day", { ascending: true }),
   ]);
 
-  // DAU today + WAU: distinct active users across the 3 activity tables,
-  // deduped in JS (fine at current data volume).
+  // WAU: distinct active users across the 3 activity tables over the last 7
+  // days, deduped in JS (fine at current data volume).
   const activity: ActivityRow[] = [
     ...((readRes.data ?? []) as ActivityRow[]),
     ...((checkRes.data ?? []) as ActivityRow[]),
     ...((chatActRes.data ?? []) as ActivityRow[]),
   ];
   const wauSet = new Set<string>();
-  const dauSet = new Set<string>();
   for (const r of activity) {
-    if (!r.user_id) continue;
-    wauSet.add(r.user_id);
-    if (r.created_at && Date.parse(r.created_at) >= todayStartMs) {
-      dauSet.add(r.user_id);
-    }
+    if (r.user_id) wauSet.add(r.user_id);
   }
+
+  // Total AI Messages = sum of the lifetime per-user counter across all users.
+  const totalAiMessages = (
+    (aiMessagesRes.data ?? []) as { ai_messages_count: number | null }[]
+  ).reduce((sum, r) => sum + (r.ai_messages_count ?? 0), 0);
+
+  // Total Minutes = all-time app-usage seconds / 60, floored to a whole minute.
+  const totalSessionSeconds = (
+    (appSessionsRes.data ?? []) as { duration_seconds: number | null }[]
+  ).reduce((sum, r) => sum + (r.duration_seconds ?? 0), 0);
+  const totalMinutes = Math.floor(totalSessionSeconds / 60);
 
   const stats = {
     totalUsers: totalUsersRes.count ?? 0,
     newUsers: newUsersRes.count ?? 0,
-    dauToday: dauSet.size,
     wau: wauSet.size,
-    aiChats: aiChatsRes.count ?? 0,
     activeStreaks: streakRes.count ?? 0,
   };
 
@@ -116,20 +123,25 @@ export default async function OverviewPage() {
   const dailyRows = (dailyRes.data ?? []) as DailyRow[];
   const series = buildDailySeries(dailyRows, ["new_signups", "dau"] as const, DAYS);
 
-  // Tables (admin_user_overview, migration 0002).
+  // Tables (admin_user_overview). total_app_seconds is a bigint — coerce to a
+  // number before sorting/formatting.
   const overviewRows = (overviewRes.data ?? []) as OverviewUserRow[];
-  const topXp: XpRow[] = [...overviewRows]
-    .sort((a, b) => (b.total_xp ?? 0) - (a.total_xp ?? 0))
-    .slice(0, 5)
-    .map((r) => ({ user_id: r.user_id, email: r.email, total_xp: r.total_xp }));
-  const topStreak: StreakRow[] = [...overviewRows]
-    .sort((a, b) => (b.current_streak ?? 0) - (a.current_streak ?? 0))
-    .slice(0, 5)
+  const topTime: TimeRow[] = [...overviewRows]
     .map((r) => ({
       user_id: r.user_id,
       email: r.email,
-      current_streak: r.current_streak,
-    }));
+      total_app_seconds: Number(r.total_app_seconds ?? 0),
+    }))
+    .sort((a, b) => b.total_app_seconds - a.total_app_seconds)
+    .slice(0, 5);
+  const topAiMessages: AiMessagesRow[] = [...overviewRows]
+    .map((r) => ({
+      user_id: r.user_id,
+      email: r.email,
+      ai_chat_count: Number(r.ai_chat_count ?? 0),
+    }))
+    .sort((a, b) => b.ai_chat_count - a.ai_chat_count)
+    .slice(0, 5);
   const recent: RecentRow[] = [...overviewRows]
     .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))
     .slice(0, 10)
@@ -152,9 +164,9 @@ export default async function OverviewPage() {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <Stat icon={Users} label="Total users" value={stats.totalUsers} />
           <Stat icon={UserPlus} label="New (7d)" value={stats.newUsers} />
-          <Stat icon={Activity} label="DAU today" value={stats.dauToday} />
+          <Stat icon={Clock} label="Total Minutes" value={formatMinutes(totalMinutes)} />
           <Stat icon={CalendarRange} label="WAU (7d)" value={stats.wau} />
-          <Stat icon={MessageSquare} label="AI chats" value={stats.aiChats} />
+          <Stat icon={MessageSquare} label="Total AI Messages" value={totalAiMessages} />
           <Stat icon={Flame} label="Active streaks" value={stats.activeStreaks} />
         </div>
 
@@ -205,8 +217,8 @@ export default async function OverviewPage() {
 
         {/* User tables */}
         <OverviewUserTables
-          topXp={topXp}
-          topStreak={topStreak}
+          topTime={topTime}
+          topAiMessages={topAiMessages}
           recent={recent}
           error={overviewRes.error?.message ?? null}
         />
@@ -224,7 +236,7 @@ function Stat({
 }: {
   icon: LucideIcon;
   label: string;
-  value: number;
+  value: number | string;
 }) {
   return (
     <Card>
@@ -234,11 +246,19 @@ function Stat({
           {label}
         </CardDescription>
         <CardTitle className="text-2xl tabular-nums">
-          {value.toLocaleString()}
+          {typeof value === "number" ? value.toLocaleString() : value}
         </CardTitle>
       </CardHeader>
     </Card>
   );
+}
+
+/** Whole minutes -> "0m" / "42m" / "3h 42m" (mirrors the user-detail helper). */
+function formatMinutes(minutes: number) {
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 function MigrationCard({ message }: { message: string }) {

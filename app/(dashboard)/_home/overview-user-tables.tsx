@@ -19,12 +19,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { RelativeDate } from "@/components/relative-date";
+import { formatDuration } from "@/lib/format-duration";
 
-export type XpRow = { user_id: string; email: string | null; total_xp: number | null };
-export type StreakRow = {
+export type TimeRow = {
   user_id: string;
   email: string | null;
-  current_streak: number | null;
+  total_app_seconds: number;
+};
+export type AiMessagesRow = {
+  user_id: string;
+  email: string | null;
+  ai_chat_count: number;
 };
 export type RecentRow = {
   user_id: string;
@@ -36,13 +41,13 @@ export type RecentRow = {
 const dash = <span className="text-muted-foreground">—</span>;
 
 export function OverviewUserTables({
-  topXp,
-  topStreak,
+  topTime,
+  topAiMessages,
   recent,
   error,
 }: {
-  topXp: XpRow[];
-  topStreak: StreakRow[];
+  topTime: TimeRow[];
+  topAiMessages: AiMessagesRow[];
   recent: RecentRow[];
   error: string | null;
 }) {
@@ -87,29 +92,29 @@ export function OverviewUserTables({
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Top 5 by XP</CardTitle>
+            <CardTitle>Top 5 by Total Time in App</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Email</TableHead>
-                  <TableHead className="text-right">XP</TableHead>
+                  <TableHead className="text-right">Time in App</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {topXp.length === 0 ? (
+                {topTime.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={2} className="h-16 text-center text-muted-foreground">
                       No data.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  topXp.map((r) => (
+                  topTime.map((r) => (
                     <TableRow key={r.user_id} {...rowProps(r.user_id)}>
                       <TableCell className="font-medium">{r.email ?? dash}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {(r.total_xp ?? 0).toLocaleString()}
+                        {formatDuration(r.total_app_seconds)}
                       </TableCell>
                     </TableRow>
                   ))
@@ -121,29 +126,29 @@ export function OverviewUserTables({
 
         <Card>
           <CardHeader>
-            <CardTitle>Top 5 by streak</CardTitle>
+            <CardTitle>Top 5 by AI Messages</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Email</TableHead>
-                  <TableHead className="text-right">Streak</TableHead>
+                  <TableHead className="text-right">AI Messages</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {topStreak.length === 0 ? (
+                {topAiMessages.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={2} className="h-16 text-center text-muted-foreground">
                       No data.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  topStreak.map((r) => (
+                  topAiMessages.map((r) => (
                     <TableRow key={r.user_id} {...rowProps(r.user_id)}>
                       <TableCell className="font-medium">{r.email ?? dash}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {(r.current_streak ?? 0).toLocaleString()}
+                        {(r.ai_chat_count ?? 0).toLocaleString()}
                       </TableCell>
                     </TableRow>
                   ))

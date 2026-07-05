@@ -13,4 +13,6 @@ export type UserOverviewRow = {
   general_chat_count: number;
   tajweed_chat_count: number;
   hifz_minutes: number;
+  total_app_seconds: number; // bigint from the view; safe-integer range
+  rag_tafseer_count: number;
 };

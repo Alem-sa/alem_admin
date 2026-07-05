@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   type ColumnDef,
@@ -29,6 +29,13 @@ import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -37,6 +44,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { formatDuration } from "@/lib/format-duration";
 import type { UserOverviewRow } from "./types";
 
 const PAGE_SIZE = 50;
@@ -49,6 +57,8 @@ const NUMERIC = new Set([
   "general_chat_count",
   "tajweed_chat_count",
   "ai_chat_count",
+  "total_app_seconds",
+  "rag_tafseer_count",
   "hifz_minutes",
   "bookmark_count",
 ]);
@@ -63,9 +73,20 @@ const EXPORT_HEADERS = [
   "General Agent",
   "Tajweed Agent",
   "Total AI Messages",
+  "Time in App",
+  "RAG Tafseer",
   "Hifz Minutes",
   "Bookmarks",
 ] as const;
+
+// Activity-window filter options. `days` = null means "All time" (no filter).
+const ACTIVITY_WINDOWS: { value: string; label: string; days: number | null }[] = [
+  { value: "all", label: "All time", days: null },
+  { value: "7", label: "Last 7 days", days: 7 },
+  { value: "14", label: "Last 14 days", days: 14 },
+  { value: "30", label: "Last 30 days", days: 30 },
+  { value: "90", label: "Last 90 days", days: 90 },
+];
 
 // Global search: match email OR display name only (case-insensitive).
 const searchFilter: FilterFn<UserOverviewRow> = (row, _id, value) => {
@@ -134,6 +155,18 @@ const columns: ColumnDef<UserOverviewRow>[] = [
     cell: ({ getValue }) => num(getValue<number | null>()),
   },
   {
+    accessorKey: "total_app_seconds",
+    header: "Time in App",
+    sortingFn: numberSort,
+    cell: ({ getValue }) => formatDuration(Number(getValue<number | null>() ?? 0)),
+  },
+  {
+    accessorKey: "rag_tafseer_count",
+    header: "RAG Tafseer",
+    sortingFn: numberSort,
+    cell: ({ getValue }) => num(getValue<number | null>()),
+  },
+  {
     accessorKey: "hifz_minutes",
     header: "Hifz Minutes",
     sortingFn: numberSort,
@@ -153,9 +186,24 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
     { id: "total_xp", desc: true },
   ]);
   const [globalFilter, setGlobalFilter] = useState("");
+  const [activityWindow, setActivityWindow] = useState("all");
+
+  // Activity filter: keep only users whose last_activity_at falls inside the
+  // selected window. This changes WHICH USERS are shown, never their (lifetime)
+  // column values. Combined (AND) with the search box below.
+  const activityRows = useMemo(() => {
+    const win = ACTIVITY_WINDOWS.find((w) => w.value === activityWindow);
+    if (!win || win.days === null) return data;
+    const cutoff = Date.now() - win.days * 86_400_000;
+    return data.filter((u) => {
+      if (!u.last_activity_at) return false;
+      const t = Date.parse(u.last_activity_at);
+      return !Number.isNaN(t) && t >= cutoff;
+    });
+  }, [data, activityWindow]);
 
   const table = useReactTable({
-    data,
+    data: activityRows,
     columns,
     state: { sorting, globalFilter },
     onSortingChange: setSorting,
@@ -169,6 +217,7 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
   });
 
   const totalUsers = data.length;
+  const filterActive = activityWindow !== "all" || globalFilter.trim() !== "";
 
   // Export ALL currently-filtered rows (search-respecting, not paginated), in
   // the displayed sort order. Generated entirely client-side.
@@ -184,6 +233,8 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
         "General Agent": u.general_chat_count ?? 0,
         "Tajweed Agent": u.tajweed_chat_count ?? 0,
         "Total AI Messages": u.ai_chat_count ?? 0,
+        "Time in App": Math.floor(Number(u.total_app_seconds ?? 0) / 60),
+        "RAG Tafseer": u.rag_tafseer_count ?? 0,
         "Hifz Minutes": u.hifz_minutes ?? 0,
         Bookmarks: u.bookmark_count ?? 0,
       };
@@ -197,7 +248,9 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
 
     const d = new Date();
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    XLSX.writeFile(workbook, `alem-users-${today}.xlsx`);
+    const win = ACTIVITY_WINDOWS.find((w) => w.value === activityWindow);
+    const slug = win && win.days !== null ? `-last-${win.days}-days` : "";
+    XLSX.writeFile(workbook, `alem-users${slug}-${today}.xlsx`);
   }
 
   // Empty data set: no users at all.
@@ -221,25 +274,45 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
 
   return (
     <div className="space-y-4">
-      {/* Search + count + export */}
+      {/* Search + activity filter + count + export */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-xs">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={globalFilter}
-            onChange={(e) => {
-              setGlobalFilter(e.target.value);
+        <div className="flex w-full flex-col gap-3 sm:max-w-md sm:flex-row sm:items-center">
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={globalFilter}
+              onChange={(e) => {
+                setGlobalFilter(e.target.value);
+                table.setPageIndex(0);
+              }}
+              placeholder="Search email or name…"
+              className="pl-8"
+              aria-label="Search users"
+            />
+          </div>
+          <Select
+            value={activityWindow}
+            onValueChange={(v) => {
+              setActivityWindow(v ?? "all");
               table.setPageIndex(0);
             }}
-            placeholder="Search email or name…"
-            className="pl-8"
-            aria-label="Search users"
-          />
+          >
+            <SelectTrigger className="w-full sm:w-[150px]" aria-label="Filter by activity">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ACTIVITY_WINDOWS.map((w) => (
+                <SelectItem key={w.value} value={w.value}>
+                  {w.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex items-center gap-3">
           <p className="text-sm text-muted-foreground">
-            {globalFilter
-              ? `${filteredRows.length} of ${totalUsers} users`
+            {filterActive
+              ? `Showing ${filteredRows.length} of ${totalUsers} users`
               : `${totalUsers} ${totalUsers === 1 ? "user" : "users"}`}
           </p>
           <Button
@@ -303,7 +376,9 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
                   colSpan={columns.length}
                   className="h-24 text-center text-muted-foreground"
                 >
-                  No users match “{globalFilter}”.
+                  {globalFilter
+                    ? `No users match “${globalFilter}”.`
+                    : "No users in the selected time window."}
                 </TableCell>
               </TableRow>
             ) : (
