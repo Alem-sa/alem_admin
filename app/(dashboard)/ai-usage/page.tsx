@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/card";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDevAccountIds, excludeDevAccounts } from "@/lib/dev-accounts";
 import { ActivityChart } from "./activity-chart";
 import { FeedbackChart } from "./feedback-chart";
 import { RecentFeedbackTable } from "./recent-feedback-table";
@@ -39,17 +40,24 @@ const DAYS = 30;
 export default async function AiUsagePage() {
   const admin = createAdminClient();
 
+  // The admin_ai_usage_* views already exclude test/dev accounts (0015). The
+  // recent-feedback list reads ai_feedback directly, so filter it here too.
+  const devIds = await getDevAccountIds();
+
   const [overviewRes, dailyRes, feedbackRes] = await Promise.all([
     admin.from("admin_ai_usage_overview").select("*"),
     admin
       .from("admin_ai_usage_daily")
       .select("*")
       .order("day", { ascending: true }),
-    admin
-      .from("ai_feedback")
-      .select("id,user_id,rating,note,created_at")
-      .order("created_at", { ascending: false })
-      .limit(20),
+    excludeDevAccounts(
+      admin
+        .from("ai_feedback")
+        .select("id,user_id,rating,note,created_at")
+        .order("created_at", { ascending: false })
+        .limit(20),
+      devIds,
+    ),
   ]);
 
   // Both analytics views come from migration 0003. If both are missing, show

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/card";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDevAccountIds, excludeDevAccounts } from "@/lib/dev-accounts";
 import { buildDailySeries } from "@/lib/daily-series";
 import { MetricChart } from "./_home/metric-chart";
 import {
@@ -50,6 +51,13 @@ export default async function OverviewPage() {
 
   const cutoff7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
 
+  // Test/dev accounts are excluded from every stat + ranking below (but stay on
+  // the users list). Fetched once; empty until dev_accounts is populated, so
+  // pre-migration behaviour is unchanged. The daily views (charts) already
+  // exclude them at the DB layer.
+  const devIds = await getDevAccountIds();
+  const devSet = new Set(devIds);
+
   const [
     totalUsersRes,
     newUsersRes,
@@ -62,24 +70,42 @@ export default async function OverviewPage() {
     overviewRes,
     dailyRes,
   ] = await Promise.all([
-    admin.from("profiles").select("*", { count: "exact", head: true }),
-    admin
-      .from("profiles")
-      .select("*", { count: "exact", head: true })
-      .gte("created_at", cutoff7),
+    // profiles PK is `id` (= the user id), so exclude dev users by id.
+    excludeDevAccounts(
+      admin.from("profiles").select("*", { count: "exact", head: true }),
+      devIds,
+      "id",
+    ),
+    excludeDevAccounts(
+      admin
+        .from("profiles")
+        .select("*", { count: "exact", head: true })
+        .gte("created_at", cutoff7),
+      devIds,
+      "id",
+    ),
     // Total AI Messages: sum the lifetime per-user counter. PostgREST
     // aggregates are disabled, so fetch the column and sum in JS. Matches the
     // users-list "Total AI Messages" column (includes popup tafseer replies).
-    admin.from("user_progress").select("ai_messages_count"),
+    excludeDevAccounts(
+      admin.from("user_progress").select("ai_messages_count"),
+      devIds,
+    ),
     // Total Minutes: all-time app-usage seconds (non-null), summed in JS.
-    admin
-      .from("app_sessions")
-      .select("duration_seconds")
-      .not("duration_seconds", "is", null),
-    admin
-      .from("user_progress")
-      .select("*", { count: "exact", head: true })
-      .gt("current_streak", 0),
+    excludeDevAccounts(
+      admin
+        .from("app_sessions")
+        .select("duration_seconds")
+        .not("duration_seconds", "is", null),
+      devIds,
+    ),
+    excludeDevAccounts(
+      admin
+        .from("user_progress")
+        .select("*", { count: "exact", head: true })
+        .gt("current_streak", 0),
+      devIds,
+    ),
     admin.from("reading_sessions").select("user_id,created_at").gte("created_at", cutoff7),
     admin.from("daily_checkins").select("user_id,created_at").gte("created_at", cutoff7),
     admin.from("ai_chats").select("user_id,created_at").gte("created_at", cutoff7),
@@ -98,7 +124,7 @@ export default async function OverviewPage() {
   ];
   const wauSet = new Set<string>();
   for (const r of activity) {
-    if (r.user_id) wauSet.add(r.user_id);
+    if (r.user_id && !devSet.has(r.user_id)) wauSet.add(r.user_id);
   }
 
   // Total AI Messages = sum of the lifetime per-user counter across all users.
@@ -124,8 +150,11 @@ export default async function OverviewPage() {
   const series = buildDailySeries(dailyRows, ["new_signups", "dau"] as const, DAYS);
 
   // Tables (admin_user_overview). total_app_seconds is a bigint — coerce to a
-  // number before sorting/formatting.
-  const overviewRows = (overviewRes.data ?? []) as OverviewUserRow[];
+  // number before sorting/formatting. admin_user_overview intentionally still
+  // includes test accounts (they show on the users list), so drop them here.
+  const overviewRows = ((overviewRes.data ?? []) as OverviewUserRow[]).filter(
+    (r) => !devSet.has(r.user_id),
+  );
   const topTime: TimeRow[] = [...overviewRows]
     .map((r) => ({
       user_id: r.user_id,

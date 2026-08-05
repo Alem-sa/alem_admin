@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDevAccountIds, excludeDevAccounts } from "@/lib/dev-accounts";
 import { FeedbackTabs } from "./feedback-tabs";
 import type { FeedbackRow, TafseerFeedbackRow } from "./types";
 
@@ -23,17 +24,27 @@ type RawFeedback = {
 export default async function FeedbackPage() {
   const admin = createAdminClient();
 
+  // Exclude test/dev accounts from both feedback tables (they'd otherwise
+  // pollute the lists + Excel exports). No-op until dev_accounts is populated.
+  const devIds = await getDevAccountIds();
+
   const [fbRes, tfRes] = await Promise.all([
-    admin
-      .from("feedback")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(LIMIT),
-    admin
-      .from("tafseer_feedback")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(LIMIT),
+    excludeDevAccounts(
+      admin
+        .from("feedback")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(LIMIT),
+      devIds,
+    ),
+    excludeDevAccounts(
+      admin
+        .from("tafseer_feedback")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(LIMIT),
+      devIds,
+    ),
   ]);
 
   const rawFb = (fbRes.data ?? []) as RawFeedback[];

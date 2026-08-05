@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   type ColumnDef,
   type FilterFn,
+  type RowData,
   type SortingFn,
   type SortingState,
   flexRender,
@@ -26,6 +27,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -47,6 +49,13 @@ import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/format-duration";
 import type { UserOverviewRow } from "./types";
 
+// Lets the Email cell badge dev/test accounts via table meta (set of dev ids).
+declare module "@tanstack/react-table" {
+  interface TableMeta<TData extends RowData> {
+    devIds?: Set<string>;
+  }
+}
+
 const PAGE_SIZE = 50;
 
 // Right-aligned, monospaced numeric columns.
@@ -67,6 +76,7 @@ const NUMERIC = new Set([
 const EXPORT_HEADERS = [
   "Email",
   "Display Name",
+  "Test Account",
   "XP",
   "Streak",
   "Tafseer Agent",
@@ -108,9 +118,23 @@ const columns: ColumnDef<UserOverviewRow>[] = [
   {
     accessorKey: "email",
     header: "Email",
-    cell: ({ getValue }) => {
+    cell: ({ getValue, row, table }) => {
       const v = getValue<string | null>();
-      return v ? <span className="font-medium">{v}</span> : dash;
+      const isDev =
+        table.options.meta?.devIds?.has(row.original.user_id) ?? false;
+      return (
+        <span className="inline-flex items-center gap-2">
+          {v ? <span className="font-medium">{v}</span> : dash}
+          {isDev && (
+            <Badge
+              variant="outline"
+              className="h-4 border-amber-500/40 px-1.5 text-[10px] font-semibold tracking-wide text-amber-600 dark:text-amber-400"
+            >
+              TEST
+            </Badge>
+          )}
+        </span>
+      );
     },
   },
   {
@@ -180,13 +204,21 @@ const columns: ColumnDef<UserOverviewRow>[] = [
   },
 ];
 
-export function UsersTable({ data }: { data: UserOverviewRow[] }) {
+export function UsersTable({
+  data,
+  devAccountIds,
+}: {
+  data: UserOverviewRow[];
+  devAccountIds: string[];
+}) {
   const router = useRouter();
   const [sorting, setSorting] = useState<SortingState>([
     { id: "total_xp", desc: true },
   ]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [activityWindow, setActivityWindow] = useState("all");
+
+  const devIdSet = useMemo(() => new Set(devAccountIds), [devAccountIds]);
 
   // Activity filter: keep only users whose last_activity_at falls inside the
   // selected window. This changes WHICH USERS are shown, never their (lifetime)
@@ -206,6 +238,7 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
     data: activityRows,
     columns,
     state: { sorting, globalFilter },
+    meta: { devIds: devIdSet },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     globalFilterFn: searchFilter,
@@ -227,6 +260,7 @@ export function UsersTable({ data }: { data: UserOverviewRow[] }) {
       return {
         Email: u.email ?? "",
         "Display Name": u.display_name ?? "",
+        "Test Account": devIdSet.has(u.user_id) ? "Yes" : "No",
         XP: u.total_xp ?? 0,
         Streak: u.current_streak ?? 0,
         "Tafseer Agent": u.tafseer_chat_count ?? 0,

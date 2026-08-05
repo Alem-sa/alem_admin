@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { AlertTriangle } from "lucide-react";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getDevAccountIds } from "@/lib/dev-accounts";
 import { UsersTable } from "./users-table";
 import type { UserOverviewRow } from "./types";
 
@@ -14,10 +15,15 @@ export default async function UsersPage() {
   // Service-role read (server-only). RLS is bypassed; this never runs in the
   // browser. The admin_user_overview view is granted to service_role only.
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("admin_user_overview")
-    .select("*")
-    .order("created_at", { ascending: false });
+  // Test accounts DO appear on this list (with a badge), so admin_user_overview
+  // is NOT filtered — we only fetch the dev id set to badge/label them.
+  const [{ data, error }, devAccountIds] = await Promise.all([
+    admin
+      .from("admin_user_overview")
+      .select("*")
+      .order("created_at", { ascending: false }),
+    getDevAccountIds(),
+  ]);
 
   return (
     <div className="p-8">
@@ -48,7 +54,10 @@ export default async function UsersPage() {
           </div>
         </div>
       ) : (
-        <UsersTable data={(data ?? []) as UserOverviewRow[]} />
+        <UsersTable
+          data={(data ?? []) as UserOverviewRow[]}
+          devAccountIds={devAccountIds}
+        />
       )}
     </div>
   );
